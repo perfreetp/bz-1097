@@ -9,7 +9,7 @@ import {
   Download,
   ArrowRight
 } from 'lucide-react'
-import { VEHICLE_TYPES, LOCATION_TYPES } from '@/utils/constants'
+import { VEHICLE_TYPES, LOCATION_TYPES, ORDER_STATUS_MAP } from '@/utils/constants'
 import { cn } from '@/lib/utils'
 
 export default function Reports() {
@@ -20,9 +20,78 @@ export default function Reports() {
   const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0
   const activeMembers = members.filter(m => m.totalOrders > 0).length
 
-  const last7Days = reports.slice(0, 7)
+  const last7Days = [...reports]
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 7)
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+
   const maxRevenue = Math.max(...last7Days.map(r => r.revenue), 1)
   const maxOrderCount = Math.max(...last7Days.map(r => r.orderCount), 1)
+
+  const escapeCsvField = (field: string | number): string => {
+    const str = String(field)
+    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+      return `"${str.replace(/"/g, '""')}"`
+    }
+    return str
+  }
+
+  const handleExport = () => {
+    const headers = [
+      '订单号',
+      '点位名称',
+      '车型',
+      '租金',
+      '超时费',
+      '押金退款',
+      '下单时间',
+      '订单状态'
+    ]
+
+    const rows = orders.map(order => {
+      const location = locations.find(loc => loc.id === order.locationId)
+      const vehicle = vehicles.find(v => v.id === order.vehicleId)
+      const vehicleType = vehicle ? VEHICLE_TYPES[vehicle.type]?.name : '-'
+      const baseRent = order.baseRent ?? order.baseAmount ?? 0
+      const overtimeFee = order.overtimeFee ?? order.overtimeAmount ?? 0
+      const refundAmount = order.status === 'settled' && order.refundAmount !== undefined
+        ? order.refundAmount
+        : '-'
+      const orderTime = order.createdAt || order.pickUpTime || '-'
+      const statusLabel = ORDER_STATUS_MAP[order.status]?.label || order.status
+
+      return [
+        order.orderNo,
+        location?.name || '-',
+        vehicleType,
+        baseRent,
+        overtimeFee,
+        refundAmount,
+        orderTime,
+        statusLabel
+      ].map(escapeCsvField).join(',')
+    })
+
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\n')
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const link = document.createElement('a')
+    const url = URL.createObjectURL(blob)
+
+    const now = new Date()
+    const year = now.getFullYear()
+    const month = String(now.getMonth() + 1).padStart(2, '0')
+    const day = String(now.getDate()).padStart(2, '0')
+    const fileName = `童车租赁收入明细_${year}${month}${day}.csv`
+
+    link.setAttribute('href', url)
+    link.setAttribute('download', fileName)
+    link.style.visibility = 'hidden'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
 
   return (
     <div className="space-y-6 p-6">
@@ -37,7 +106,10 @@ export default function Reports() {
             近7天
             <ArrowRight className="h-3.5 w-3.5 rotate-90" />
           </button>
-          <button className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/30 hover:shadow-xl hover:shadow-blue-500/40 hover:translate-y-[-1px] transition-all duration-200">
+          <button
+            onClick={handleExport}
+            className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/30 hover:shadow-xl hover:shadow-blue-500/40 hover:translate-y-[-1px] transition-all duration-200"
+          >
             <Download className="h-4 w-4" />
             导出报表
           </button>

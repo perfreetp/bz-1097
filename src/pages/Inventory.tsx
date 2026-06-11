@@ -1,3 +1,4 @@
+import { useState, useMemo } from 'react'
 import { useStore } from '@/store/useStore'
 import {
   LayoutDashboard,
@@ -10,23 +11,64 @@ import {
   TrendingUp,
   TrendingDown
 } from 'lucide-react'
-import { VEHICLE_STATUS, VEHICLE_TYPES } from '@/utils/constants'
+import { VEHICLE_STATUS, VEHICLE_TYPES, type VehicleType } from '@/utils/constants'
 import { cn } from '@/lib/utils'
+
+type VehicleTypeFilter = VehicleType | 'all'
 
 export default function Inventory() {
   const { vehicles, locations } = useStore()
+  const [vehicleTypeFilter, setVehicleTypeFilter] = useState<VehicleTypeFilter>('all')
 
-  const stats = {
-    total: vehicles.length,
-    available: vehicles.filter(v => v.status === 'available').length,
-    inUse: vehicles.filter(v => v.status === 'in_use').length,
-    maintenance: vehicles.filter(v => v.status === 'maintenance').length
-  }
+  const filteredVehicles = useMemo(() => {
+    if (vehicleTypeFilter === 'all') return vehicles
+    return vehicles.filter(v => v.type === vehicleTypeFilter)
+  }, [vehicles, vehicleTypeFilter])
 
-  const occupancyRate = locations.reduce((acc, loc) => {
-    const used = loc.totalSlots - loc.availableSlots
-    return acc + (used / loc.totalSlots) * 100
-  }, 0) / locations.length
+  const stats = useMemo(() => ({
+    total: filteredVehicles.length,
+    available: filteredVehicles.filter(v => v.status === 'available').length,
+    inUse: filteredVehicles.filter(v => v.status === 'in_use').length,
+    maintenance: filteredVehicles.filter(v => v.status === 'maintenance').length
+  }), [filteredVehicles])
+
+  const locationStats = useMemo(() => {
+    return locations.map(loc => {
+      const locVehicles = filteredVehicles.filter(v => v.locationId === loc.id)
+      const available = locVehicles.filter(v => v.status === 'available').length
+      const inUse = locVehicles.filter(v => v.status === 'in_use').length
+      const maintenance = locVehicles.filter(v => v.status === 'maintenance').length
+      const total = locVehicles.length
+      const hasVehicles = total > 0
+      const usage = total > 0 ? Math.round((inUse / total) * 100) : 0
+
+      return {
+        ...loc,
+        filteredAvailable: available,
+        filteredInUse: inUse,
+        filteredMaintenance: maintenance,
+        filteredTotal: total,
+        hasVehicles,
+        filteredUsage: usage
+      }
+    })
+  }, [locations, filteredVehicles])
+
+  const occupancyRate = useMemo(() => {
+    const locationsWithVehicles = locationStats.filter(loc => loc.filteredTotal > 0)
+    if (locationsWithVehicles.length === 0) return 0
+    const totalUsage = locationsWithVehicles.reduce((acc, loc) => acc + loc.filteredUsage, 0)
+    return totalUsage / locationsWithVehicles.length
+  }, [locationStats])
+
+  const filterChips: { key: VehicleTypeFilter; label: string; color: string }[] = [
+    { key: 'all', label: '全部', color: '#64748b' },
+    ...Object.entries(VEHICLE_TYPES).map(([key, type]) => ({
+      key: key as VehicleType,
+      label: type.name,
+      color: type.color
+    }))
+  ]
 
   return (
     <div className="space-y-6 p-6">
@@ -39,6 +81,34 @@ export default function Inventory() {
           <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
           实时更新中
         </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {filterChips.map(chip => {
+          const isActive = vehicleTypeFilter === chip.key
+          return (
+            <button
+              key={chip.key}
+              onClick={() => setVehicleTypeFilter(chip.key)}
+              className={cn(
+                'inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-all duration-300',
+                isActive
+                  ? 'text-white shadow-md scale-105'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+              )}
+              style={isActive ? { backgroundColor: chip.color } : {}}
+            >
+              <span
+                className={cn(
+                  'h-2.5 w-2.5 rounded-full transition-all',
+                  isActive ? 'bg-white' : ''
+                )}
+                style={!isActive ? { backgroundColor: chip.color } : {}}
+              />
+              {chip.label}
+            </button>
+          )
+        })}
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -91,12 +161,26 @@ export default function Inventory() {
           <div className="space-y-4">
             {Object.entries(VEHICLE_TYPES).map(([key, type]) => {
               const count = vehicles.filter(v => v.type === key).length
-              const percent = Math.round((count / vehicles.length) * 100)
+              const percent = vehicles.length > 0 ? Math.round((count / vehicles.length) * 100) : 0
+              const isSelected = vehicleTypeFilter === key
               return (
-                <div key={key}>
+                <div
+                  key={key}
+                  className={cn(
+                    'rounded-xl p-3 transition-all duration-300',
+                    isSelected ? 'ring-2 ring-offset-2 bg-slate-50' : ''
+                  )}
+                  style={isSelected ? { boxShadow: `0 0 0 2px white, 0 0 0 4px ${type.color}` } : {}}
+                >
                   <div className="flex items-center justify-between mb-1.5">
                     <div className="flex items-center gap-2">
-                      <span className="h-3 w-3 rounded-full" style={{ backgroundColor: type.color }} />
+                      <span
+                        className={cn(
+                          'h-3 w-3 rounded-full transition-all',
+                          isSelected ? 'animate-pulse scale-125' : ''
+                        )}
+                        style={{ backgroundColor: type.color }}
+                      />
                       <span className="text-sm font-medium text-slate-700">{type.name}</span>
                     </div>
                     <div className="flex items-center gap-2">
@@ -106,8 +190,15 @@ export default function Inventory() {
                   </div>
                   <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden">
                     <div
-                      className="h-full rounded-full transition-all duration-500"
-                      style={{ width: `${percent}%`, backgroundColor: type.color }}
+                      className={cn(
+                        'h-full rounded-full transition-all duration-500',
+                        isSelected ? 'shadow-lg' : ''
+                      )}
+                      style={{
+                        width: `${percent}%`,
+                        backgroundColor: type.color,
+                        boxShadow: isSelected ? `0 0 8px ${type.color}80` : 'none'
+                      }}
                     />
                   </div>
                 </div>
@@ -125,7 +216,7 @@ export default function Inventory() {
           </div>
           <div className="grid grid-cols-2 gap-3">
             {Object.entries(VEHICLE_STATUS).map(([key, status]) => {
-              const count = vehicles.filter(v => v.status === key).length
+              const count = filteredVehicles.filter(v => v.status === key).length
               return (
                 <div key={key} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50/50 p-3 hover:bg-white hover:shadow-sm transition-all">
                   <div
@@ -156,8 +247,7 @@ export default function Inventory() {
           </button>
         </div>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {locations.slice(0, 6).map(loc => {
-            const usage = Math.round(((loc.totalSlots - loc.availableSlots) / loc.totalSlots) * 100)
+          {locationStats.slice(0, 6).map(loc => {
             return (
               <div key={loc.id} className="group rounded-xl border border-slate-100 p-4 hover:border-blue-200 hover:shadow-md hover:shadow-blue-500/5 transition-all duration-300 cursor-pointer">
                 <div className="flex items-start gap-3">
@@ -171,35 +261,41 @@ export default function Inventory() {
                     <p className="mt-0.5 text-xs text-slate-500 truncate">{loc.address}</p>
                   </div>
                 </div>
-                <div className="mt-4 space-y-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-slate-500">车位占用</span>
-                    <span className="font-semibold text-slate-700">{loc.totalSlots - loc.availableSlots}/{loc.totalSlots}</span>
-                  </div>
-                  <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
-                    <div
-                      className={cn(
-                        'h-full rounded-full transition-all duration-500',
-                        usage > 80 ? 'bg-rose-500' : usage > 60 ? 'bg-amber-500' : 'bg-emerald-500'
-                      )}
-                      style={{ width: `${usage}%` }}
-                    />
-                  </div>
-                  <div className="grid grid-cols-3 gap-2 pt-2 text-center">
-                    <div className="rounded-lg bg-emerald-50 py-1.5">
-                      <p className="text-sm font-bold text-emerald-600">{loc.availableVehicles}</p>
-                      <p className="text-[10px] text-emerald-600/70">可用</p>
+                {loc.hasVehicles ? (
+                  <div className="mt-4 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-500">车位占用</span>
+                      <span className="font-semibold text-slate-700">{loc.filteredInUse}/{loc.filteredTotal}</span>
                     </div>
-                    <div className="rounded-lg bg-blue-50 py-1.5">
-                      <p className="text-sm font-bold text-blue-600">{loc.inUseVehicles}</p>
-                      <p className="text-[10px] text-blue-600/70">使用</p>
+                    <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+                      <div
+                        className={cn(
+                          'h-full rounded-full transition-all duration-500',
+                          loc.filteredUsage > 80 ? 'bg-rose-500' : loc.filteredUsage > 60 ? 'bg-amber-500' : 'bg-emerald-500'
+                        )}
+                        style={{ width: `${loc.filteredUsage}%` }}
+                      />
                     </div>
-                    <div className="rounded-lg bg-amber-50 py-1.5">
-                      <p className="text-sm font-bold text-amber-600">{loc.maintenanceVehicles}</p>
-                      <p className="text-[10px] text-amber-600/70">维护</p>
+                    <div className="grid grid-cols-3 gap-2 pt-2 text-center">
+                      <div className="rounded-lg bg-emerald-50 py-1.5">
+                        <p className="text-sm font-bold text-emerald-600">{loc.filteredAvailable}</p>
+                        <p className="text-[10px] text-emerald-600/70">可用</p>
+                      </div>
+                      <div className="rounded-lg bg-blue-50 py-1.5">
+                        <p className="text-sm font-bold text-blue-600">{loc.filteredInUse}</p>
+                        <p className="text-[10px] text-blue-600/70">使用</p>
+                      </div>
+                      <div className="rounded-lg bg-amber-50 py-1.5">
+                        <p className="text-sm font-bold text-amber-600">{loc.filteredMaintenance}</p>
+                        <p className="text-[10px] text-amber-600/70">维护</p>
+                      </div>
                     </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="mt-4 flex items-center justify-center py-6">
+                    <span className="text-sm text-slate-400">暂无</span>
+                  </div>
+                )}
               </div>
             )
           })}
